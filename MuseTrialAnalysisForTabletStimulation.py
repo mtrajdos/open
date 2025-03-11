@@ -26,12 +26,7 @@ class MuseTrialProcessor:
         """Initialize MuseTrialProcessor with default configurations."""
         self.GUI = {
             'LAYOUT': {
-                'figure_size': (15, 12),
-                'left_margin': 0.15,
-                'right_margin': 0.85,
-                'top_margin': 0.95,
-                'bottom_margin': 0.1,
-                'subplot_spacing': 0.3
+                'figure_size': (15, 12)
             },
             'CONTROLS': {
                 'filter_toggles': {
@@ -134,12 +129,12 @@ class MuseTrialProcessor:
                     'EEG': {
                         'default': 20,
                         'max': 1700,
-                        'min': 1
+                        'min': 0
                     },
                     'AUX': {
                         'default': 1000,
-                        'max': 1800,
-                        'min': -100
+                        'max': 1700,
+                        'min': 0
                     }
                 },
                 'COLORS': {
@@ -162,9 +157,6 @@ class MuseTrialProcessor:
             'VISUALIZATION': {
                 'STIM_WINDOW_ALPHA': 0.2,
                 'STIM_WINDOW_COLOR': 'gray'
-            },
-            'AVERAGING': {
-                'conditions': ['highpos', 'neutral', 'Grand Average']
             }
         }
         self._setup_logging()
@@ -194,8 +186,6 @@ class MuseTrialProcessor:
     def _initialize_attributes(self):
         """Initialize all class attributes."""
         self.CHANNELS = self.CONFIG['CHANNELS']
-        self.CHANNEL_TYPES = {ch: 'EEG' for ch in self.CHANNELS['EEG']}
-        self.CHANNEL_TYPES.update({ch: 'AUX' for ch in self.CHANNELS['AUX']})
         
         self.trials_event_id = {}
         self.raw_data = None
@@ -204,15 +194,10 @@ class MuseTrialProcessor:
         self.timestamps = None
         self.experiment_start_time = None
         self.input_filepath = None
-        self.log_data = None
-        self.SF = self.CONFIG['SAMPLING_RATE']
-        self.avg_stim_duration = 0.5
-        
         self.current_trial = 0
         self.trial_timestamps = []
-        self.current_time = 0.0
-        self.current_condition = 0
-        self.epoch_length = self.CONFIG['TRIAL_WINDOW']['END'] - self.CONFIG['TRIAL_WINDOW']['START']
+        self.ica = None
+        self.ica_applied = False
         
         self.channel_scales = {
             ch: self.CONFIG['PLOT']['SCALES']['EEG']['default'] 
@@ -230,6 +215,14 @@ class MuseTrialProcessor:
             'TP10': False
         }
 
+        self.condition_map = {
+            1: 'highpos',
+            2: 'neutral',
+            3: 'lowpos',
+            4: 'highneg',
+            5: 'lowneg'
+        }
+
         # Scales for different plot components
         self.y_scale_erp = self.CONFIG['PLOT']['SCALES']['EEG']['default']
         self.y_scale_pd = self.CONFIG['PLOT']['SCALES']['AUX']['default']
@@ -238,10 +231,6 @@ class MuseTrialProcessor:
         self.trial_info = None
         self.trial_info_filepath = None
         
-    def _initialize_ica(self):
-        """Initialize ICA-related attributes."""
-        self.ica = None
-        self.ica_applied = False
         
     def load_muse_data(self, filepath):
         """Load and preprocess MUSE EEG data from CSV."""
@@ -309,17 +298,6 @@ class MuseTrialProcessor:
             self.logger.error(f"Error loading MUSE data: {str(e)}")
             self.logger.error(traceback.format_exc())
             raise
-        
-    def get_condition_name(self, cond_code):
-        """Get condition name from condition code."""
-        condition_map = {
-            1: 'highpos',
-            2: 'neutral',
-            3: 'lowpos',
-            4: 'highneg',
-            5: 'lowneg'
-        }
-        return condition_map.get(cond_code, 'unknown')
         
     def load_trial_info(self, filepath=None):
         """Load trial information from stimulus log file (.txt/.dat)."""
@@ -411,15 +389,6 @@ class MuseTrialProcessor:
                 
                 # Log total number of trials found
                 self.logger.info(f"Found {len(self.trial_info)} total trials in log file")
-                
-                # Create mapping from condition codes to string labels
-                self.condition_map = {
-                    1: 'highpos',
-                    2: 'neutral',
-                    3: 'lowpos',
-                    4: 'highneg',
-                    5: 'lowneg'
-                }
                 
                 return True
                     
@@ -892,7 +861,7 @@ class MuseTrialProcessor:
                 self.save_trials_to_edf()
                 self._initial_save_complete = True
             
-            return True
+                return True
             
         except Exception as e:
             self.logger.error(f"Error creating trials: {str(e)}")
@@ -1217,7 +1186,7 @@ class MuseTrialProcessor:
             except Exception as e:
                 self.logger.warning(f"Could not set montage: {e}")
             
-            # Initialize ICA correctly based on method
+            # Initialize ICA based on method
             if self.CONFIG['ICA']['method'] == 'infomax':
                 self.ica = mne.preprocessing.ICA(
                     n_components=self.CONFIG['ICA']['n_components'],
@@ -1339,7 +1308,7 @@ class MuseTrialProcessor:
             self.logger.error(traceback.format_exc())
             return False
             
-    def toggle_ica(self, label=None):
+    def toggle_ica(self):
         """Toggle ICA with EEG filter requirement"""
         try:
             if not self.CONFIG['FILTERS']['EEG']['enabled']:
@@ -1368,7 +1337,7 @@ class MuseTrialProcessor:
             self.update_plot()
             
         except Exception as e:
-            print(f"Error toggling ICA: {str(e)}")
+            self.logger.error(f"Error toggling ICA: {str(e)}")
         
     def visualize_ica_components_with_timeseries(self):
         """Visualize continous ICA data as interactive plots"""
@@ -1562,80 +1531,6 @@ class MuseTrialProcessor:
             
         except Exception as e:
             self.logger.error(f"Error in ICA visualization: {e}")
-            self.logger.error(traceback.format_exc())
-            return None
-        
-    def _visualize_component_scores(self, scores):
-        """Visualize component scores with proper discrete x-axis."""
-        try:
-            # Create a new figure
-            fig = plt.figure(figsize=(10, 6))
-            
-            # Case-check for no components scores
-            if len(scores) == 0:
-                self.logger.warning("No scores to visualize")
-                plt.text(0.5, 0.5, "No component scores available", 
-                    ha='center', va='center', transform=plt.gca().transAxes)
-                plt.tight_layout()
-                self.score_fig = fig
-                return fig
-            
-            # Ensure scores is a proper numpy array of floats
-            scores_array = np.zeros(len(scores))
-            for i in range(len(scores)):
-                try:
-                    if hasattr(scores[i], 'item'):
-                        scores_array[i] = float(scores[i].item())
-                    elif isinstance(scores[i], (list, tuple)) and len(scores[i]) > 0:
-                        scores_array[i] = float(scores[i][0])
-                    else:
-                        scores_array[i] = float(scores[i])
-                except (TypeError, ValueError, IndexError):
-                    scores_array[i] = 0.0
-            
-            # Use integer component indices for x-axis
-            component_indices = list(range(len(scores_array)))
-            
-            # Create bar plot with specific x positions
-            plt.bar(component_indices, scores_array, color='blue', width=0.7)
-            
-            # Highlight excluded components
-            if hasattr(self.ica, 'exclude') and self.ica.exclude:
-                for idx in self.ica.exclude:
-                    if idx < len(scores_array):
-                        plt.bar(int(idx), scores_array[int(idx)], color='red', width=0.7)
-            
-            # Set x-ticks explicitly to component indices
-            plt.xticks(component_indices, [f'ICA{i:03d}' for i in component_indices])
-            plt.tick_params(axis='x', rotation=45 if len(component_indices) > 10 else 0)
-            
-            # Label axes
-            plt.xlabel('ICA Component')
-            plt.ylabel('Correlation Score')
-            plt.title('ICA Component Correlation with EOG')
-            plt.grid(True, alpha=0.3)
-            
-            # Add threshold line if applicable
-            if len(scores_array) > 0 and not np.all(np.isnan(scores_array)):
-                threshold_val = np.percentile(scores_array[~np.isnan(scores_array)], 75)
-                threshold = float(threshold_val)
-                plt.axhline(y=threshold, color='r', linestyle='--', 
-                        label=f'Threshold (75th percentile = {threshold:.3f})')
-                plt.legend()
-                
-            plt.tight_layout()
-            
-            # Store figure reference
-            self.score_fig = fig
-            
-            # Show figure without blocking
-            plt.show(block=False)
-            
-            # Return figure
-            return fig
-            
-        except Exception as e:
-            self.logger.warning(f"Error visualizing component scores: {e}")
             self.logger.error(traceback.format_exc())
             return None
             
@@ -2075,10 +1970,6 @@ class MuseTrialProcessor:
             title = f"Trial {trial_num}/{len(self.trials)}"
             self.fig.suptitle(title, y=0.98)
             
-            # Default stimulus window - at time 0 (original trigger point)
-            stim_start = -1800  # Start at -1800ms (shifted trigger point)
-            stim_end = -1300    # End 500ms after trigger
-            
             # Update each channel plot
             for ch in self.CHANNELS['EEG'] + self.CHANNELS['AUX']:
                 ax = self.axes[ch]
@@ -2093,12 +1984,6 @@ class MuseTrialProcessor:
                         ha='center', va='center')
                     continue
                 
-                # Plot stimulus window
-                ax.axvspan(stim_start, stim_end,
-                        alpha=self.CONFIG['VISUALIZATION']['STIM_WINDOW_ALPHA'],
-                        color=self.CONFIG['VISUALIZATION']['STIM_WINDOW_COLOR'],
-                        zorder=1)
-                
                 # Plot the data
                 valid_data = ch_data[~np.isnan(ch_data)]
                 if len(valid_data) > 0:
@@ -2106,10 +1991,6 @@ class MuseTrialProcessor:
                         color=self.CONFIG['PLOT']['COLORS'][ch],
                         linewidth=self.CONFIG['PLOT']['STYLES']['line_width'],
                         zorder=2)
-                    
-                    # Add vertical line at original trigger (now at -1800ms)
-                    ax.axvline(x=-1800, color='r', linestyle='--',
-                            alpha=self.CONFIG['PLOT']['STYLES']['marker_alpha'])
                     
                     # Set axis limits
                     if ch in self.CHANNELS['EEG']:
@@ -2726,15 +2607,6 @@ class MuseTrialProcessor:
         )
         current_y -= 0.05
         
-        # Initialize electrode states if needed
-        if not hasattr(self, 'electrode_states'):
-            self.electrode_states = {
-                'AF7': True,
-                'AF8': True,
-                'TP9': False, 
-                'TP10': False
-            }
-        
         # Electrode checkboxes
         electrode_ax = plt.axes([main_width + 0.01, current_y - 0.15, ctrl_width-0.02, 0.15])
         self.electrode_checks = CheckButtons(
@@ -3026,16 +2898,6 @@ class MuseTrialProcessor:
                 if np.isfinite(ymin) and np.isfinite(ymax):
                     ymean = (ymin + ymax) / 2
                     self.ax_pd.set_ylim(ymean - scale_pd/2, ymean + scale_pd/2)
-        
-    def navigate_conditions(self, direction):
-        """Navigate between conditions in average view."""
-        conditions = self.CONFIG['AVERAGING']['conditions']
-        if direction == 'prev':
-            self.current_condition = (self.current_condition - 1) % len(conditions)
-        elif direction == 'next':
-            self.current_condition = (self.current_condition + 1) % len(conditions)
-        
-        self.update_averages_plot()
 
     def navigate_trials(self, direction):
         """Navigate between trials."""
@@ -3093,21 +2955,15 @@ class MuseTrialProcessor:
         elif event.key == 'up':
             self.scale_slider.set_val(min(
                 self.CONFIG['PLOT']['SCALES']['EEG']['max'],
-                self.scale * 1.2
             ))
         elif event.key == 'down':
             self.scale_slider.set_val(max(
                 self.CONFIG['PLOT']['SCALES']['EEG']['min'],
-                self.scale / 1.2
             ))
 
     def on_key_press_avg(self, event):
         """Handle keyboard events in average view."""
-        if event.key == 'left':
-            self.navigate_conditions('prev')
-        elif event.key == 'right':
-            self.navigate_conditions('next')
-        elif event.key == 'up':
+        if event.key == 'up':
             if event.inaxes == self.ax_avg:
                 self.zoom_in_erp_plot(None)
             elif event.inaxes == self.ax_pd:

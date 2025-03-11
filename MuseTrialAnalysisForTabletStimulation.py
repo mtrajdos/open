@@ -1197,7 +1197,7 @@ class MuseTrialProcessor:
                     random_state=self.CONFIG['ICA']['random_state']
                 )
                     
-            # Fit ICA on EEG channels only
+            # Fit ICA on EEG channels
             self.logger.info(f"Fitting ICA on filtered data...")
             self.ica.fit(data_to_use, picks=self.CHANNELS['EEG'])
             
@@ -1237,7 +1237,7 @@ class MuseTrialProcessor:
             self.logger.info(f"Applying ICA with components {self.ica.exclude} excluded")
             self.ica.apply(cleaned_data)
             
-            # Create only one component visualization to prevent duplicates
+            # Create component visualization
             self.visualize_ica_components()
             
             # Show ICA overlay (original vs. cleaned)

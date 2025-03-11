@@ -1008,7 +1008,7 @@ class MuseTrialProcessor:
                     random_state=self.CONFIG['ICA']['random_state']
                 )
                     
-            # Fit ICA on EEG channels only
+            # Fit ICA on EEG channels
             self.logger.info(f"Fitting ICA on filtered data...")
             self.ica.fit(data_to_use, picks=self.CHANNELS['EEG'])
             
@@ -1041,7 +1041,7 @@ class MuseTrialProcessor:
             # Apply ICA to a copy of the data
             cleaned_data = data_to_use.copy()
             
-            # Ensure correct exclusions set
+            # Ensure exclusions set
             if not hasattr(self.ica, 'exclude'):
                 self.ica.exclude = []
                 
@@ -1660,7 +1660,7 @@ class MuseTrialProcessor:
         """Setup GUI controls with ICA toggle unchecked by default."""
         ctrl_cfg = self.GUI['CONTROLS']
         
-        # Filter toggles with correct initial states
+        # Filter toggles with initial states
         filter_pos = ctrl_cfg['filter_toggles']
         filter_ax = plt.axes([
             filter_pos['x'], filter_pos['y'],

@@ -153,15 +153,10 @@ class MuseTrialProcessor:
                     'axis_label_pad': 10,
                     'title_pad': 15
                 }
-            },
-            'VISUALIZATION': {
-                'STIM_WINDOW_ALPHA': 0.2,
-                'STIM_WINDOW_COLOR': 'gray'
             }
         }
         self._setup_logging()
         self._initialize_attributes()
-        self._initialize_ica()
         
     def _setup_logging(self):
         """Setup detailed logging configuration."""
